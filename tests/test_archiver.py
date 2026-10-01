@@ -13,6 +13,7 @@ from homework_archiver import archiver, journal, scanner
 
 def _touch(folder: Path, name: str, when: datetime | None = None) -> Path:
     path = folder / name
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"x")
     if when is not None:
         ts = when.timestamp()

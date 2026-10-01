@@ -65,8 +65,8 @@ jobs:
           export PYTHONPATH="$GITHUB_WORKSPACE"
           run() { python -m homework_archiver "$@"; }
           fail() { echo "::error title=ASSERT [$STEP]:: $1"; exit 1; }
-          has() { echo "$1" | grep -qF "$2" || fail "expected [$2] in: $1"; }
-          hasn() { if echo "$1" | grep -qF "$2"; then fail "unexpected [$2] in: $1"; fi; }
+          has() { echo "$1" | grep -qF -- "$2" || fail "expected [$2] in: $1"; }
+          hasn() { if echo "$1" | grep -qF -- "$2"; then fail "unexpected [$2] in: $1"; fi; }
           isfile() { [ -f "$1" ] || fail "missing file: $1"; }
           nofile() { [ ! -e "$1" ] || fail "should not exist: $1"; }
           dirabsent() { [ ! -e "$1/.homework_archiver" ] || fail ".homework_archiver should not exist after dry-run"; }
@@ -96,7 +96,7 @@ jobs:
 
           STEP='D 交互输入 n 取消'
           d=$(newsp); printf 'x' > "$d/2026001_张三_作业.pdf"
-          printf 'n\n' | run rename "$d" --apply > /dev/null
+          printf 'n\n' | run rename "$d" --apply > /dev
           isfile "$d/2026001_张三_作业.pdf"; nofile "$d/作业_2026001.pdf"; dirabsent "$d"
           run rename "$d" --apply -y > /dev/null
           isfile "$d/作业_2026001.pdf"

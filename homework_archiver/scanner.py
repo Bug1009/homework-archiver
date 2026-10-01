@@ -37,15 +37,17 @@ class FileInfo:
 
 
 def sanitize_display(text: object) -> str:
-    """把控制字符转义为可见形式（如 ``\\x0a``）。
+    r"""把控制字符转义为可见形式（如换行显示为 ``\x0a``）。
 
     文件名可能来自不可信来源，其中的换行/ANSI 转义序列若原样打印，
     可能伪造终端输出或报告行。转义后只影响显示，不改写真实文件名。
 
     >>> sanitize_display("正常文件名.pdf")
     '正常文件名.pdf'
-    >>> sanitize_display("a\\nb.pdf")
-    'a\\\\x0ab.pdf'
+    >>> sanitize_display("a\nb.pdf")
+    'a\\x0ab.pdf'
+    >>> "\x1b" not in sanitize_display(chr(27) + "x")
+    True
     """
     return "".join(
         ch if (" " <= ch <= "~" or ord(ch) > 0x7F) and ch != "\x7f" else f"\\x{ord(ch):02x}"

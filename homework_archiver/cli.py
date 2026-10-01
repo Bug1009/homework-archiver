@@ -83,7 +83,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             recursive=args.recursive,
         )
     except NotADirectoryError as exc:
-        print(f"错误：{exc}", file=sys.stderr)
+        print(f"错误：{scanner.sanitize_display(exc)}", file=sys.stderr)
         return 2
     print(scanner.format_listing(infos))
     return 0
@@ -93,7 +93,7 @@ def cmd_rename(args: argparse.Namespace) -> int:
     try:
         items = renamer.plan_renames(args.folder)
     except NotADirectoryError as exc:
-        print(f"错误：{exc}", file=sys.stderr)
+        print(f"错误：{scanner.sanitize_display(exc)}", file=sys.stderr)
         return 2
 
     print("改名计划预览：")
@@ -117,7 +117,7 @@ def cmd_rename(args: argparse.Namespace) -> int:
     journal.save_operation(args.folder, "rename", moves)
     print(f"\n执行完成：改名 {result.renamed_count} 个，跳过 {result.skipped_count} 个。")
     for old_name, reason in result.skipped:
-        print(f"  已跳过：{old_name}（{reason}）")
+        print(f"  已跳过：{scanner.sanitize_display(old_name)}（{scanner.sanitize_display(reason)}）")
     if result.renamed:
         print("可使用 undo 子命令撤销本次操作。")
     return 0
@@ -127,7 +127,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
     try:
         items = archiver.plan_archive(args.folder, by=args.by)
     except (NotADirectoryError, ValueError) as exc:
-        print(f"错误：{exc}", file=sys.stderr)
+        print(f"错误：{scanner.sanitize_display(exc)}", file=sys.stderr)
         return 2
 
     print("归档计划预览：")
@@ -157,12 +157,12 @@ def cmd_archive(args: argparse.Namespace) -> int:
 def cmd_undo(args: argparse.Namespace) -> int:
     root = Path(args.folder)
     if not root.is_dir():
-        print(f"错误：文件夹不存在或不是文件夹：{root}", file=sys.stderr)
+        print(f"错误：文件夹不存在或不是文件夹：{scanner.sanitize_display(str(root))}", file=sys.stderr)
         return 2
     try:
         op, _ = journal.load_latest(root)
-    except OSError as exc:
-        print(f"错误：{exc}", file=sys.stderr)
+    except (OSError, journal.JournalError) as exc:
+        print(f"错误：{scanner.sanitize_display(str(exc))}", file=sys.stderr)
         return 2
     if op is None:
         print("没有可撤销的操作（尚未执行过改名或归档，或已撤销过）。")
@@ -176,7 +176,8 @@ def cmd_undo(args: argparse.Namespace) -> int:
     result = journal.undo_last(root)
     print(f"撤销完成：恢复 {result.restored_count} 个，跳过 {result.skipped_count} 个。")
     for name, reason in result.skipped:
-        print(f"  已跳过：{name}（{reason}）")
+        # name/reason 可能来自日志，打印前同样净化
+        print(f"  已跳过：{scanner.sanitize_display(name)}（{scanner.sanitize_display(reason)}）")
     if result.skipped_count:
         print("\n有文件未能恢复，操作日志已保留，请检查上述冲突后重试 undo。")
     return 0

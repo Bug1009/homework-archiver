@@ -17,18 +17,30 @@ jobs:
       - name: Compile all modules
         run: python -m compileall -q homework_archiver tests
       - name: Doctests
-        run: python -m doctest homework_archiver/scanner.py homework_archiver/renamer.py homework_archiver/archiver.py -v
+        shell: bash
+        run: |
+          if ! python -m doctest homework_archiver/scanner.py homework_archiver/renamer.py homework_archiver/archiver.py -v > doctest.log 2>&1; then
+            grep -E 'File "|Expected|Got|FAILED|Error' doctest.log | head -15 | while IFS= read -r l; do echo "::error title=doctest::$l"; done
+            exit 1
+          fi
       - name: Unit tests including edge cases
-        run: pytest -q
+        shell: bash
+        run: |
+          if ! pytest -q > pytest.log 2>&1; then
+            grep -E 'FAILED|ERROR' pytest.log | head -20 | while IFS= read -r l; do echo "::error title=pytest::$l"; done
+            echo "::error title=pytest-tail::$(tail -3 pytest.log | tr '\n' '|')"
+            exit 1
+          fi
       - name: End-to-end black-box demo with Chinese filenames
         shell: bash
         run: |
           set -euo pipefail
+          trap 'echo "::error title=BLACKBOX::command failed at script line $LINENO"' ERR
           DEMO=$(mktemp -d)
           cd "$DEMO"
           export PYTHONPATH="$GITHUB_WORKSPACE"
           run() { python -m homework_archiver "$@"; }
-          fail() { echo "ASSERT FAIL: $1"; exit 1; }
+          fail() { echo "::error title=ASSERT:: $1"; exit 1; }
           has() { echo "$1" | grep -qF "$2" || fail "expected [$2] in: $1"; }
           hasn() { if echo "$1" | grep -qF "$2"; then fail "unexpected [$2] in: $1"; fi; }
           isfile() { [ -f "$1" ] || fail "missing file: $1"; }

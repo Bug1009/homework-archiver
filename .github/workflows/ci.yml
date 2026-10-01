@@ -18,7 +18,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install pytest
-        run: python -m pip install --upgrade pip pytest
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pytest ruff
+      - name: Static check (ruff pyflakes)
+        run: ruff check homework_archiver tests --select F
       - name: Run tests
         run: pytest -q

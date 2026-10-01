@@ -73,8 +73,8 @@ def test_listing_escapes_newline_in_filename(tmp_path):
     (tmp_path / "a\nb.pdf").write_bytes(b"x")
     text = scanner.format_listing(scanner.scan_folder(tmp_path))
     assert "\\x0a" in text
-    # 除表头/分隔/合计三个预期换行外，文件名不能再制造额外的行
-    assert text.count("\n") == 4
+    # 表头/分隔/数据/合计共 4 行，文件名中的换行不能再制造额外的行
+    assert text.count("\n") == 3
 
 
 def test_rename_preview_escapes_control_characters(tmp_path):

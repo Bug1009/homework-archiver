@@ -158,3 +158,28 @@ def test_cli_rename_missing_folder_returns_error_code(
     code = main(["rename", str(tmp_path / "nope")])
     assert code == 2
     assert "错误" in capsys.readouterr().err
+
+
+# ---------- 安全加固：符号链接不跟随、预览输出净化 ----------
+
+
+def test_rename_plan_ignores_symlink(tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "secret.pdf"
+    target.write_bytes(b"secret")
+    (tmp_path / "2026001_张三_作业.pdf").symlink_to(target)
+
+    items = renamer.plan_renames(tmp_path)
+    # 符号链接被跳过扫描，因此没有任何改名候选
+    assert all(item.skipped for item in items)
+    result = renamer.apply_renames(tmp_path, items)
+    assert result.renamed == []
+    assert target.read_bytes() == b"secret"  # 外部目标原封不动
+
+
+def test_rename_preview_escapes_control_characters(tmp_path: Path):
+    (tmp_path / "note\n.txt").write_bytes(b"x")  # 不合规，会进入跳过行
+    text = renamer.format_preview(renamer.plan_renames(tmp_path))
+    assert "\\x0a" in text
+    assert "\nnote" not in text

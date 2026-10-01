@@ -4,8 +4,9 @@
     python -m homework_archiver scan <文件夹> [--ext .docx] [--ext .pdf] [-r]
     python -m homework_archiver rename <文件夹>            # 只预览，不动盘
     python -m homework_archiver rename <文件夹> --apply     # 确认后真正改名
-
-后续需求会在本文件增量加入 archive / undo 子命令。
+    python -m homework_archiver archive <文件夹>           # 按学期归档预览
+    python -m homework_archiver archive <文件夹> --apply    # 确认后归档并出报告
+    python -m homework_archiver undo <文件夹>              # 撤销上一次改名/归档
 """
 
 from __future__ import annotations
@@ -14,13 +15,13 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from homework_archiver import __version__, renamer, scanner
+from homework_archiver import __version__, archiver, journal, renamer, scanner
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="homework-archiver",
-        description="作业文件批量归档工具（扫描 / 改名 / 归档）",
+        description="作业文件批量归档工具（扫描 / 改名 / 归档 / 撤销）",
     )
     parser.add_argument("--version", action="version", version=f"homework-archiver {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -47,7 +48,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rename.add_argument("-y", "--yes", action="store_true", help="执行时跳过交互确认")
 
+    # 需求 3：归档与报告
+    archive = subparsers.add_parser("archive", help="按学期（默认）或扩展名把文件移入子文件夹")
+    archive.add_argument("folder", help="要整理的文件夹路径")
+    archive.add_argument(
+        "--by",
+        choices=[archiver.TERM, archiver.EXT],
+        default=archiver.TERM,
+        help="归档方式：term=按修改时间推断学期（默认），ext=按扩展名分类",
+    )
+    archive.add_argument("--apply", action="store_true", help="真正执行归档（默认只预览）")
+    archive.add_argument("-y", "--yes", action="store_true", help="执行时跳过交互确认")
+
+    # 需求 3：撤销上次操作
+    undo = subparsers.add_parser("undo", help="撤销上一次改名或归档操作")
+    undo.add_argument("folder", help="要撤销操作的文件夹路径")
+    undo.add_argument("-y", "--yes", action="store_true", help="跳过交互确认")
+
     return parser
+
+
+def _confirm(prompt: str, skip: bool) -> bool:
+    if skip:
+        return True
+    return input(prompt).strip().lower() == "y"
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -83,18 +107,73 @@ def cmd_rename(args: argparse.Namespace) -> int:
         print("\n没有需要改名的文件，未执行任何操作。")
         return 0
 
-    if not args.yes:
-        answer = input(f"\n确认对以上 {will_change} 个文件执行改名？输入 y 继续，其他键取消：")
-        if answer.strip().lower() != "y":
-            print("已取消，未修改任何文件。")
-            return 0
+    if not _confirm(f"\n确认对以上 {will_change} 个文件执行改名？输入 y 继续，其他键取消：", args.yes):
+        print("已取消，未修改任何文件。")
+        return 0
 
     result = renamer.apply_renames(args.folder, items)
-    print(
-        f"\n执行完成：改名 {result.renamed_count} 个，跳过 {result.skipped_count} 个。"
-    )
+    moves = [journal.Move(src=old, dst=new) for old, new in result.renamed]
+    journal.save_operation(args.folder, "rename", moves)
+    print(f"\n执行完成：改名 {result.renamed_count} 个，跳过 {result.skipped_count} 个。")
     for old_name, reason in result.skipped:
         print(f"  已跳过：{old_name}（{reason}）")
+    if result.renamed:
+        print("可使用 undo 子命令撤销本次操作。")
+    return 0
+
+
+def cmd_archive(args: argparse.Namespace) -> int:
+    try:
+        items = archiver.plan_archive(args.folder, by=args.by)
+    except (NotADirectoryError, ValueError) as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+
+    print("归档计划预览：")
+    print(archiver.format_plan(items))
+
+    if not args.apply:
+        print("\n这是预览，未修改任何文件。确认无误后加 --apply 执行。")
+        return 0
+
+    will_move = sum(not item.skipped for item in items)
+    if will_move == 0:
+        print("\n没有需要归档的文件，未执行任何操作。")
+        return 0
+
+    if not _confirm(f"\n确认移动以上 {will_move} 个文件？输入 y 继续，其他键取消：", args.yes):
+        print("已取消，未修改任何文件。")
+        return 0
+
+    result, journal_path = archiver.apply_archive(args.folder, items)
+    report = archiver.format_report(result, journal_path)
+    report_path = archiver.save_report(args.folder, report)
+    print("\n" + report)
+    print(f"\n报告已保存：{report_path}")
+    return 0
+
+
+def cmd_undo(args: argparse.Namespace) -> int:
+    try:
+        op, _ = journal.load_latest(args.folder)
+    except (NotADirectoryError, OSError) as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+    if op is None:
+        print("没有可撤销的操作（尚未执行过改名或归档，或已撤销过）。")
+        return 0
+
+    print(f"将撤销上一次操作（{op.kind}，{op.timestamp}），共 {len(op.moves)} 个文件。")
+    if not _confirm("确认撤销？输入 y 继续，其他键取消：", args.yes):
+        print("已取消。")
+        return 0
+
+    result = journal.undo_last(args.folder)
+    print(f"撤销完成：恢复 {result.restored_count} 个，跳过 {result.skipped_count} 个。")
+    for name, reason in result.skipped:
+        print(f"  已跳过：{name}（{reason}）")
+    if result.skipped_count:
+        print("\n有文件未能恢复，操作日志已保留，请检查上述冲突后重试 undo。")
     return 0
 
 
@@ -105,6 +184,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_scan(args)
     if args.command == "rename":
         return cmd_rename(args)
+    if args.command == "archive":
+        return cmd_archive(args)
+    if args.command == "undo":
+        return cmd_undo(args)
     parser.error(f"未知命令：{args.command}")
     return 2  # pragma: no cover
 

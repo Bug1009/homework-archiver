@@ -31,6 +31,7 @@
 ```
 homework_archiver/
 ├── __init__.py
+├── __main__.py   # 支持 python -m homework_archiver 调用
 ├── scanner.py    # 需求1：扫描与列出
 ├── renamer.py    # 需求2：批量改名
 ├── journal.py    # 需求3：操作日志与撤销

@@ -129,9 +129,8 @@ def test_apply_archive_then_undo_restores(tmp_path: Path):
     assert not (tmp_path / "2026年暑期/a.pdf").exists()
 
 
-def test_format_report_contains_counts_and_reasons(tmp_path: Path):
+def test_format_report_contains_counts_and_undo_hint(tmp_path: Path):
     _touch(tmp_path, "a.pdf", datetime(2026, 3, 1))
-    _touch(tmp_path, "2026年春季学期/b.pdf") if False else None
     result, jp = archiver.apply_archive(tmp_path, archiver.plan_archive(tmp_path))
 
     text = archiver.format_report(result, jp)

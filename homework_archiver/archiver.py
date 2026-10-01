@@ -9,6 +9,7 @@
 也支持 ``--by ext`` 按扩展名归类（如 ``PDF``、``DOCX``）。
 
 与改名一致：先出计划、确认后执行、绝不覆盖；执行后写操作日志并生成报告。
+计划与报告输出经 sanitize_display 净化，文件名中的控制字符无法伪造输出。
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from homework_archiver.journal import JOURNAL_DIR, Move, save_operation
-from homework_archiver.scanner import scan_folder
+from homework_archiver.scanner import sanitize_display, scan_folder
 
 TERM = "term"
 EXT = "ext"
@@ -119,7 +120,7 @@ def format_plan(items: list[ArchiveItem]) -> str:
         else:
             lines.append(f"  移动：{rel}  ->  {item.target_rel}")
     lines.append(f"合计：将移动 {move_n} 个，跳过 {skip_n} 个")
-    return "\n".join(lines)
+    return "\n".join(sanitize_display(line) for line in lines)
 
 
 def apply_archive(folder: str | Path, items: list[ArchiveItem]) -> tuple[ArchiveResult, Path | None]:
@@ -165,7 +166,7 @@ def format_report(result: ArchiveResult, journal_path: Path | None) -> str:
         lines.extend(f"    {name}：{reason}" for name, reason in result.skipped)
     if journal_path is not None:
         lines.append("  撤销本次操作：python -m homework_archiver undo <文件夹>")
-    return "\n".join(lines)
+    return "\n".join(sanitize_display(line) for line in lines)
 
 
 def save_report(folder: str | Path, report: str) -> Path:

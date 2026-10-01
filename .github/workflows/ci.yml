@@ -1,47 +1,101 @@
-name: CI
+name: CI-DEEP
 
 on:
   push:
-    branches: [main, "feature/**", "debug/**"]
-  pull_request:
+    branches: ["debug/**"]
 
 jobs:
-  test:
+  deep:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
       - name: Install pytest
         run: python -m pip install --upgrade pip pytest
-      - name: Run tests
+      - name: Compile all modules
+        run: python -m compileall -q homework_archiver tests
+      - name: Doctests
+        run: python -m doctest homework_archiver/scanner.py homework_archiver/renamer.py homework_archiver/archiver.py -v
+      - name: Unit tests including edge cases
+        run: pytest -q
+      - name: End-to-end black-box demo with Chinese filenames
+        shell: bash
         run: |
-          pytest -q > pytest-out.txt 2>&1 || true
-          cat pytest-out.txt
-      - name: Publish failures as annotations
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import re
-          text = open('pytest-out.txt', encoding='utf-8').read()
-          picked = []
-          for line in text.splitlines():
-              if 'FAILED' in line or 'ERROR' in line or 'AssertionError' in line or 'Error' in line:
-                  picked.append(line.strip())
-          seen = set()
-          for line in picked[:25]:
-              if line in seen:
-                  continue
-              seen.add(line)
-              print('::error::' + line[:480])
-          m = re.search(r'short test summary info.*', text, re.S)
-          if m:
-              tail = m.group(0).splitlines()[:25]
-              print('::error title=summary::' + ' | '.join(tail)[:480])
-          PY
+          set -euo pipefail
+          DEMO=$(mktemp -d)
+          cd "$DEMO"
+          export PYTHONPATH="$GITHUB_WORKSPACE"
+          run() { python -m homework_archiver "$@"; }
+          fail() { echo "ASSERT FAIL: $1"; exit 1; }
+          has() { echo "$1" | grep -qF "$2" || fail "expected [$2] in: $1"; }
+          hasn() { if echo "$1" | grep -qF "$2"; then fail "unexpected [$2] in: $1"; fi; }
+          isfile() { [ -f "$1" ] || fail "missing file: $1"; }
+          nofile() { [ ! -e "$1" ] || fail "should not exist: $1"; }
+          content() { [ "$(cat "$1")" = "$2" ] || fail "content of $1 = [$(cat "$1")], want [$2]"; }
+
+          printf 'ONE'   > '2026001_张三_高数作业.pdf'
+          printf 'TWO'   > '2026002_李四_英语作文.docx'
+          printf 'THREE' > '杂项笔记.txt'
+          printf 'FOUR'  > '2026003_王五_论文.pdf'
+          printf 'GUARD' > '论文_2026003.pdf'
+          printf 'FIVE'  > '2026004_赵六_作业.pdf'
+          printf 'SIX'   > '2026004_钱七_作业.pdf'
+          touch -d '2025-10-15 12:00' '2026001_张三_高数作业.pdf'
+
+          echo '== 1. scan 扩展名过滤 =='
+          OUT=$(run scan . --ext .pdf)
+          has "$OUT" '高数作业'
+          hasn "$OUT" '杂项笔记'
+          has "$OUT" '共 5 个文件'
+
+          echo '== 2. rename 只预览不动盘 =='
+          OUT=$(run rename .)
+          has "$OUT" '高数作业_2026001.pdf'
+          has "$OUT" '跳过'
+          isfile '2026001_张三_高数作业.pdf'
+
+          echo '== 3. rename --apply：改名/防覆盖/批次冲突 =='
+          OUT=$(run rename . --apply -y)
+          isfile '高数作业_2026001.pdf'
+          nofile '2026001_张三_高数作业.pdf'
+          isfile '英语作文_2026002.docx'
+          content '论文_2026003.pdf' 'GUARD'
+          isfile '2026003_王五_论文.pdf'
+          isfile '2026004_赵六_作业.pdf'
+          isfile '2026004_钱七_作业.pdf'
+          has "$OUT" '改名 2 个'
+          has "$OUT" '跳过 5 个'
+
+          echo '== 4. undo 改名，再 undo 应提示无记录 =='
+          OUT=$(run undo . -y)
+          has "$OUT" '恢复 2 个'
+          isfile '2026001_张三_高数作业.pdf'
+          nofile '高数作业_2026001.pdf'
+          OUT=$(run undo . -y)
+          has "$OUT" '没有可撤销的操作'
+
+          echo '== 5. 再次改名后按学期归档 + 报告 =='
+          run rename . --apply -y > /dev/null
+          OUT=$(run archive . --apply -y)
+          isfile '2025年秋季学期/高数作业_2026001.pdf'
+          has "$OUT" '整理报告'
+          has "$OUT" '处理（移动）：7 个'
+          ls .homework_archiver/reports/report-*.txt > /dev/null
+
+          echo '== 6. undo 归档 =='
+          OUT=$(run undo . -y)
+          has "$OUT" '恢复 7 个'
+          isfile '高数作业_2026001.pdf'
+          nofile '2025年秋季学期/高数作业_2026001.pdf'
+
+          echo '== 7. 按扩展名归档再撤销 =='
+          OUT=$(run archive . --by ext --apply -y)
+          isfile 'PDF/高数作业_2026001.pdf'
+          isfile 'DOCX/英语作文_2026002.docx'
+          isfile 'TXT/杂项笔记.txt'
+          run undo . -y > /dev/null
+          isfile '高数作业_2026001.pdf'
+
+          echo 'BLACKBOX ALL PASS'

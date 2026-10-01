@@ -1,11 +1,12 @@
 """需求 1：扫描与列出。
-
 扫描指定文件夹，列出其中的文件及其大小、修改时间；
 支持按扩展名过滤（大小写不敏感，带不带点均可），可选递归子目录。
-
 本模块只做“读”操作，不会创建、修改或删除任何文件。
-"""
 
+安全说明：不跟随符号链接（避免扫描/改名意外触及文件夹之外的目标）；
+sanitize_display 用于所有面向用户的输出，防止文件名中的控制字符
+（换行、ANSI 转义等）伪造终端输出或报告内容。
+"""
 from __future__ import annotations
 
 import os
@@ -33,6 +34,25 @@ class FileInfo:
     name: str
     size: int
     mtime: datetime
+
+
+def sanitize_display(text: object) -> str:
+    r"""把控制字符转义为可见形式（如换行显示为 ``\x0a``）。
+
+    文件名可能来自不可信来源，其中的换行/ANSI 转义序列若原样打印，
+    可能伪造终端输出或报告行。转义后只影响显示，不改写真实文件名。
+
+    >>> sanitize_display("正常文件名.pdf")
+    '正常文件名.pdf'
+    >>> sanitize_display("a\nb.pdf")
+    'a\\x0ab.pdf'
+    >>> "\x1b" not in sanitize_display(chr(27) + "x")
+    True
+    """
+    return "".join(
+        ch if (" " <= ch <= "~" or ord(ch) > 0x7F) and ch != "\x7f" else f"\\x{ord(ch):02x}"
+        for ch in str(text)
+    )
 
 
 def normalize_extension(ext: str) -> str:
@@ -79,6 +99,9 @@ def scan_folder(
 
     Raises:
         NotADirectoryError: folder 不存在或不是文件夹
+
+    符号链接（无论指向文件还是目录）一律跳过：改名/归档只应处理
+    文件夹内的真实文件，不能意外操作链接目标（可能在文件夹之外）。
     """
     root = Path(folder).expanduser()
     if not root.exists():
@@ -91,6 +114,9 @@ def scan_folder(
     iterator = root.rglob("*") if recursive else root.iterdir()
     infos: list[FileInfo] = []
     for entry in iterator:
+        if entry.is_symlink():
+            # 不跟随符号链接，杜绝通过链接操作文件夹之外目标的可能
+            continue
         if not entry.is_file():
             continue
         if recursive and INTERNAL_DIR in entry.relative_to(root).parts:
@@ -106,7 +132,6 @@ def scan_folder(
                 mtime=datetime.fromtimestamp(stat.st_mtime),
             )
         )
-
     infos.sort(key=lambda info: str(info.path).lower())
     return infos
 
@@ -130,7 +155,11 @@ def format_listing(infos: Sequence[FileInfo]) -> str:
         return "没有符合条件的文件。"
 
     rows = [
-        (info.name, human_size(info.size), info.mtime.strftime("%Y-%m-%d %H:%M"))
+        (
+            sanitize_display(info.name),
+            human_size(info.size),
+            info.mtime.strftime("%Y-%m-%d %H:%M"),
+        )
         for info in infos
     ]
     name_w = max(len("文件名"), *(len(row[0]) for row in rows))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from homework_archiver import renamer
 from homework_archiver.cli import main
 

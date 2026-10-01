@@ -164,7 +164,7 @@ def format_report(result: ArchiveResult, journal_path: Path | None) -> str:
         lines.append("  跳过明细：")
         lines.extend(f"    {name}：{reason}" for name, reason in result.skipped)
     if journal_path is not None:
-        lines.append(f"  撤销本次操作：python -m homework_archiver undo <文件夹>")
+        lines.append("  撤销本次操作：python -m homework_archiver undo <文件夹>")
     return "\n".join(lines)
 
 

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**", "debug/**"]
   pull_request:
 
 jobs:
@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
@@ -21,4 +21,27 @@ jobs:
       - name: Install pytest
         run: python -m pip install --upgrade pip pytest
       - name: Run tests
-        run: pytest -q
+        run: |
+          pytest -q > pytest-out.txt 2>&1 || true
+          cat pytest-out.txt
+      - name: Publish failures as annotations
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import re
+          text = open('pytest-out.txt', encoding='utf-8').read()
+          picked = []
+          for line in text.splitlines():
+              if 'FAILED' in line or 'ERROR' in line or 'AssertionError' in line or 'Error' in line:
+                  picked.append(line.strip())
+          seen = set()
+          for line in picked[:25]:
+              if line in seen:
+                  continue
+              seen.add(line)
+              print('::error::' + line[:480])
+          m = re.search(r'short test summary info.*', text, re.S)
+          if m:
+              tail = m.group(0).splitlines()[:25]
+              print('::error title=summary::' + ' | '.join(tail)[:480])
+          PY

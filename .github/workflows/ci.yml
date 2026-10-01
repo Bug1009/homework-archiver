@@ -96,7 +96,7 @@ jobs:
 
           STEP='D 交互输入 n 取消'
           d=$(newsp); printf 'x' > "$d/2026001_张三_作业.pdf"
-          printf 'n\n' | run rename "$d" --apply > /dev
+          printf 'n\n' | run rename "$d" --apply > /dev/null
           isfile "$d/2026001_张三_作业.pdf"; nofile "$d/作业_2026001.pdf"; dirabsent "$d"
           run rename "$d" --apply -y > /dev/null
           isfile "$d/作业_2026001.pdf"
@@ -133,7 +133,7 @@ jobs:
           d=$(newsp); mkdir -p "$d/sub"
           printf x > "$d/2026001_张三_作业.pdf"
           printf x > "$d/sub/2026002_李四_嵌套.pdf"
-          run rename "$d" --apply -y > /dev
+          run rename "$d" --apply -y > /dev/null
           isfile "$d/作业_2026001.pdf"
           isfile "$d/sub/2026002_李四_嵌套.pdf"
 

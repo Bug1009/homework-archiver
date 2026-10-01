@@ -1,19 +1,23 @@
-name: CI-DEEP
+name: CI-DEEP2
 
 on:
   push:
     branches: ["debug/**"]
 
 jobs:
-  deep:
+  deep2:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install pytest
-        run: python -m pip install --upgrade pip pytest
+          python-version: ${{ matrix.python-version }}
+      - name: Install tools
+        run: python -m pip install --upgrade pip pytest pytest-randomly ruff
       - name: Compile all modules
         run: python -m compileall -q homework_archiver tests
       - name: Doctests
@@ -23,91 +27,170 @@ jobs:
             grep -E 'File "|Expected|Got|FAILED|Error' doctest.log | head -15 | while IFS= read -r l; do echo "::error title=doctest::$l"; done
             exit 1
           fi
-      - name: Unit tests including edge cases
+      - name: Pyflakes static check (ruff F)
         shell: bash
         run: |
-          if ! pytest -q > pytest.log 2>&1; then
-            grep -E 'FAILED|ERROR' pytest.log | head -20 | while IFS= read -r l; do echo "::error title=pytest::$l"; done
-            echo "::error title=pytest-tail::$(tail -3 pytest.log | tr '\n' '|')"
+          if ! ruff check homework_archiver tests --select F > ruff.log 2>&1; then
+            cat ruff.log
+            grep -E 'F[0-9]+' ruff.log | head -20 | while IFS= read -r l; do echo "::error title=ruff::$l"; done
             exit 1
           fi
-      - name: End-to-end black-box demo with Chinese filenames
+          cat ruff.log
+      - name: Pytest with warnings as errors
+        shell: bash
+        run: |
+          if ! pytest -q -W error > pytest-werror.log 2>&1; then
+            grep -E 'FAILED|ERROR|Warning' pytest-werror.log | head -20 | while IFS= read -r l; do echo "::error title=pytest-Werror::$l"; done
+            echo "::error title=pytest-werror-tail::$(tail -3 pytest-werror.log | tr '\n' '|')"
+            exit 1
+          fi
+          tail -1 pytest-werror.log
+      - name: Pytest randomized order (3 seeds, test-order independence)
+        shell: bash
+        run: |
+          for seed in 1 2026 99999; do
+            if ! PYTEST_RANDOMLY_SEED=$seed pytest -q -p randomly > rand-$seed.log 2>&1; then
+              grep -E 'FAILED|ERROR' rand-$seed.log | head -20 | while IFS= read -r l; do echo "::error title=random-$seed::$l"; done
+              echo "::error title=random-$seed-tail::$(tail -3 rand-$seed.log | tr '\n' '|')"
+              exit 1
+            fi
+            echo "seed $seed: $(tail -1 rand-$seed.log)"
+          done
+      - name: Extended black-box scenarios
         shell: bash
         run: |
           set -euo pipefail
-          trap 'echo "::error title=BLACKBOX::command failed at script line $LINENO"' ERR
-          DEMO=$(mktemp -d)
-          cd "$DEMO"
+          STEP='init'
+          trap 'echo "::error title=BLACKBOX::failed at [$STEP] script line $LINENO"' ERR
           export PYTHONPATH="$GITHUB_WORKSPACE"
           run() { python -m homework_archiver "$@"; }
-          fail() { echo "::error title=ASSERT:: $1"; exit 1; }
+          fail() { echo "::error title=ASSERT [$STEP]:: $1"; exit 1; }
           has() { echo "$1" | grep -qF "$2" || fail "expected [$2] in: $1"; }
           hasn() { if echo "$1" | grep -qF "$2"; then fail "unexpected [$2] in: $1"; fi; }
           isfile() { [ -f "$1" ] || fail "missing file: $1"; }
           nofile() { [ ! -e "$1" ] || fail "should not exist: $1"; }
-          content() { [ "$(cat "$1")" = "$2" ] || fail "content of $1 = [$(cat "$1")], want [$2]"; }
+          dirabsent() { [ ! -e "$1/.homework_archiver" ] || fail ".homework_archiver should not exist after dry-run"; }
+          newsp() { d=$(mktemp -d); mkdir -p "$d"; echo "$d"; }
 
-          printf 'ONE'   > '2026001_张三_高数作业.pdf'
-          printf 'TWO'   > '2026002_李四_英语作文.docx'
-          printf 'THREE' > '杂项笔记.txt'
-          printf 'FOUR'  > '2026003_王五_论文.pdf'
-          printf 'GUARD' > '论文_2026003.pdf'
-          printf 'FIVE'  > '2026004_赵六_作业.pdf'
-          printf 'SIX'   > '2026004_钱七_作业.pdf'
-          touch -d '2025-10-15 12:00' '2026001_张三_高数作业.pdf'
+          STEP='A 帮助与版本'
+          has "$(run --help)" 'scan'
+          has "$(run scan --help)" '--ext'
+          has "$(run --version)" '0.1.0'
 
-          echo '== 1. scan 扩展名过滤 =='
-          OUT=$(run scan . --ext .pdf)
-          has "$OUT" '高数作业'
-          hasn "$OUT" '杂项笔记'
-          has "$OUT" '共 5 个文件'
+          STEP='B 错误路径返回码'
+          if run scan /no/such/path 2>err.txt; then fail 'scan 不存在目录应失败'; fi
+          has "$(cat err.txt)" '错误'
+          if run rename /no/such/path 2>/dev/null; then fail 'rename 不存在目录应失败'; fi
+          if run archive /no/such/path 2>/dev/null; then fail 'archive 不存在目录应失败'; fi
+          if run undo /no/such/path 2>/dev/null; then fail 'undo 不存在目录应失败'; fi
+          d=$(newsp); touch "$d/plain.file"
+          if run scan "$d/plain.file" 2>/dev/null; then fail '传入文件而非文件夹应失败'; fi
 
-          echo '== 2. rename 只预览不动盘 =='
-          OUT=$(run rename .)
-          has "$OUT" '高数作业_2026001.pdf'
-          has "$OUT" '跳过'
-          isfile '2026001_张三_高数作业.pdf'
+          STEP='C 预览绝不落盘'
+          d=$(newsp); printf 'x' > "$d/2026001_张三_作业.pdf"
+          run rename "$d" > /dev/null
+          isfile "$d/2026001_张三_作业.pdf"; nofile "$d/作业_2026001.pdf"; dirabsent "$d"
+          run archive "$d" > /dev/null
+          isfile "$d/2026001_张三_作业.pdf"; dirabsent "$d"
+          [ "$(find "$d" -type d | wc -l)" = "1" ] || fail '预览意外创建了子目录'
 
-          echo '== 3. rename --apply：改名/防覆盖/批次冲突 =='
-          OUT=$(run rename . --apply -y)
-          isfile '高数作业_2026001.pdf'
-          nofile '2026001_张三_高数作业.pdf'
-          isfile '英语作文_2026002.docx'
-          content '论文_2026003.pdf' 'GUARD'
-          isfile '2026003_王五_论文.pdf'
-          isfile '2026004_赵六_作业.pdf'
-          isfile '2026004_钱七_作业.pdf'
-          has "$OUT" '改名 2 个'
-          has "$OUT" '跳过 5 个'
+          STEP='D 交互输入 n 取消'
+          d=$(newsp); printf 'x' > "$d/2026001_张三_作业.pdf"
+          printf 'n\n' | run rename "$d" --apply > /dev/null
+          isfile "$d/2026001_张三_作业.pdf"; nofile "$d/作业_2026001.pdf"; dirabsent "$d"
+          run rename "$d" --apply -y > /dev/null
+          isfile "$d/作业_2026001.pdf"
+          printf 'n\n' | run undo "$d" > /dev/null
+          isfile "$d/作业_2026001.pdf"   # 取消撤销，文件保持改名后状态
+          ls "$d/.homework_archiver/logs/"*.json > /dev/null  # 日志仍在
+          run undo "$d" -y > /dev/null
+          isfile "$d/2026001_张三_作业.pdf"
 
-          echo '== 4. undo 改名，再 undo 应提示无记录 =='
-          OUT=$(run undo . -y)
-          has "$OUT" '恢复 2 个'
-          isfile '2026001_张三_高数作业.pdf'
-          nofile '高数作业_2026001.pdf'
-          OUT=$(run undo . -y)
-          has "$OUT" '没有可撤销的操作'
+          STEP='E 改名幂等：第二轮无操作且日志不被覆盖'
+          d=$(newsp); printf 'x' > "$d/2026001_张三_作业.pdf"
+          run rename "$d" --apply -y > /dev/null
+          OUT=$(run rename "$d" --apply -y)
+          has "$OUT" '没有需要改名的文件'
+          isfile "$d/作业_2026001.pdf"
+          run undo "$d" -y > /dev/null
+          isfile "$d/2026001_张三_作业.pdf"
 
-          echo '== 5. 再次改名后按学期归档 + 报告 =='
-          run rename . --apply -y > /dev/null
-          OUT=$(run archive . --apply -y)
-          isfile '2025年秋季学期/高数作业_2026001.pdf'
-          has "$OUT" '整理报告'
-          has "$OUT" '处理（移动）：7 个'
-          ls .homework_archiver/reports/report-*.txt > /dev/null
+          STEP='F 学期边界（1月/2月/7月/9月）'
+          d=$(newsp)
+          for n in jan feb jul sep; do printf x > "$d/$n.pdf"; done
+          touch -d '2026-01-20 09:00' "$d/jan.pdf"
+          touch -d '2026-02-01 09:00' "$d/feb.pdf"
+          touch -d '2026-07-01 09:00' "$d/jul.pdf"
+          touch -d '2025-09-01 09:00' "$d/sep.pdf"
+          OUT=$(run archive "$d")
+          has "$OUT" '2025年秋季学期/jan.pdf'
+          has "$OUT" '2026年春季学期/feb.pdf'
+          has "$OUT" '2026年暑期/jul.pdf'
+          has "$OUT" '2025年秋季学期/sep.pdf'
+          isfile "$d/jan.pdf"  # 预览不动盘
 
-          echo '== 6. undo 归档 =='
-          OUT=$(run undo . -y)
-          has "$OUT" '恢复 7 个'
-          isfile '高数作业_2026001.pdf'
-          nofile '2025年秋季学期/高数作业_2026001.pdf'
+          STEP='G 改名不递归子目录'
+          d=$(newsp); mkdir -p "$d/sub"
+          printf x > "$d/2026001_张三_作业.pdf"
+          printf x > "$d/sub/2026002_李四_嵌套.pdf"
+          run rename "$d" --apply -y > /dev
+          isfile "$d/作业_2026001.pdf"
+          isfile "$d/sub/2026002_李四_嵌套.pdf"
 
-          echo '== 7. 按扩展名归档再撤销 =='
-          OUT=$(run archive . --by ext --apply -y)
-          isfile 'PDF/高数作业_2026001.pdf'
-          isfile 'DOCX/英语作文_2026002.docx'
-          isfile 'TXT/杂项笔记.txt'
-          run undo . -y > /dev/null
-          isfile '高数作业_2026001.pdf'
+          STEP='H 归档-撤销 sha256 完整性'
+          d=$(newsp); head -c 4096 /dev/urandom > "$d/2026001_张三_大作业.pdf"
+          touch -d '2025-11-11 10:00' "$d/2026001_张三_大作业.pdf"
+          before=$(sha256sum "$d/2026001_张三_大作业.pdf" | cut -d' ' -f1)
+          run rename "$d" --apply -y > /dev/null
+          run archive "$d" --apply -y > /dev/null
+          isfile "$d/2025年秋季学期/大作业_2026001.pdf"
+          run undo "$d" -y > /dev/null   # 撤销归档
+          run undo "$d" -y > /dev/null   # 撤销改名
+          after=$(sha256sum "$d/2026001_张三_大作业.pdf" | cut -d' ' -f1)
+          [ "$before" = "$after" ] || fail "sha256 不一致 $before != $after"
 
-          echo 'BLACKBOX ALL PASS'
+          STEP='I 递归扫描含内部目录过滤'
+          d=$(newsp); mkdir -p "$d/sub" "$d/.homework_archiver/logs"
+          printf x > "$d/a.pdf"; printf x > "$d/sub/b.pdf"
+          printf x > "$d/.homework_archiver/logs/op.json"
+          OUT=$(run scan "$d" -r)
+          has "$OUT" 'a.pdf'; has "$OUT" 'b.pdf'; hasn "$OUT" 'op.json'
+          has "$OUT" '共 2 个文件'
+          OUT=$(run scan "$d")
+          hasn "$OUT" 'b.pdf'
+
+          STEP='J 归档后再改名互不干扰'
+          d=$(newsp); printf x > "$d/2026001_张三_作业.pdf"
+          touch -d '2025-10-10 10:00' "$d/2026001_张三_作业.pdf"
+          run archive "$d" --apply -y > /dev/null
+          isfile "$d/2025年秋季学期/2026001_张三_作业.pdf"
+          OUT=$(run rename "$d" --apply -y)
+          has "$OUT" '没有需要改名的文件'
+          isfile "$d/2025年秋季学期/2026001_张三_作业.pdf"
+
+          STEP='K 磁盘重名在预览中标注跳过原因'
+          d=$(newsp); printf a > "$d/2026001_张三_作业.pdf"; printf b > "$d/作业_2026001.pdf"
+          OUT=$(run rename "$d")
+          has "$OUT" '已存在'
+          [ "$(cat "$d/作业_2026001.pdf")" = 'b' ] || fail '守卫文件内容被改动'
+
+          STEP='L 撤销受阻：跳过+保日志，解除后可重试'
+          d=$(newsp); printf MOVED > "$d/a.pdf"; touch -d '2026-07-15 10:00' "$d/a.pdf"
+          run archive "$d" --apply -y > /dev/null
+          printf BLOCKER > "$d/a.pdf"
+          OUT=$(run undo "$d" -y)
+          has "$OUT" '跳过 1 个'
+          isfile "$d/2026年暑期/a.pdf"
+          ls "$d/.homework_archiver/logs/"*.json > /dev/null
+          rm "$d/a.pdf"
+          OUT=$(run undo "$d" -y)
+          has "$OUT" '恢复 1 个'
+          [ "$(cat "$d/a.pdf")" = 'MOVED' ] || fail '撤销后文件内容错误'
+
+          STEP='M 空文件夹归档'
+          d=$(newsp)
+          run archive "$d" > /dev/null
+          OUT=$(run archive "$d" --apply -y)
+          has "$OUT" '没有需要归档的文件'
+
+          echo 'DEEP2 BLACKBOX ALL PASS'

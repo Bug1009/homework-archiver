@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from homework_archiver import __version__, archiver, journal, renamer, scanner
 
@@ -154,9 +155,13 @@ def cmd_archive(args: argparse.Namespace) -> int:
 
 
 def cmd_undo(args: argparse.Namespace) -> int:
+    root = Path(args.folder)
+    if not root.is_dir():
+        print(f"错误：文件夹不存在或不是文件夹：{root}", file=sys.stderr)
+        return 2
     try:
-        op, _ = journal.load_latest(args.folder)
-    except (NotADirectoryError, OSError) as exc:
+        op, _ = journal.load_latest(root)
+    except OSError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
     if op is None:
@@ -168,7 +173,7 @@ def cmd_undo(args: argparse.Namespace) -> int:
         print("已取消。")
         return 0
 
-    result = journal.undo_last(args.folder)
+    result = journal.undo_last(root)
     print(f"撤销完成：恢复 {result.restored_count} 个，跳过 {result.skipped_count} 个。")
     for name, reason in result.skipped:
         print(f"  已跳过：{name}（{reason}）")

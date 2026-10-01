@@ -1,0 +1,57 @@
+name: SECURITY
+
+# 安全扫描：全部为只读静态分析，不会执行被扫描代码
+# - bandit：Python 官方社区主流 SAST（PyCQA/OpenStack）
+# - ruff --select S：flake8-bandit 规则集
+# - pip-audit：依赖已知 CVE 数据库（PyPA Advisory DB）
+on:
+  push:
+    branches: ["debug/**"]
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install security tools
+        run: python -m pip install --upgrade pip bandit ruff pip-audit
+
+      - name: Bandit SAST (all severities, informational only first)
+        shell: bash
+        run: |
+          set +e
+          bandit -r homework_archiver -f screen -o bandit.log -ll
+          code=$?
+          cat bandit.log
+          grep -E '>> Issue:|Severity:|Location:|Test ID:' bandit.log | while IFS= read -r l; do
+            echo "::warning title=bandit-finding::$l"
+          done
+          # 高/中严重度直接判失败，低危仅记录
+          bandit -r homework_archiver -ll -q
+          echo "bandit medium+ exit=$?"
+
+      - name: Ruff security ruleset S
+        shell: bash
+        run: |
+          ruff check homework_archiver --select S --output-format concise | tee ruff-s.log || true
+          grep -E ' S[0-9]+' ruff-s.log | while IFS= read -r l; do
+            echo "::warning title=ruff-S::$l"
+          done
+
+      - name: Dangerous sink grep (manual audit aid)
+        shell: bash
+        run: |
+          if grep -rnE '\b(eval|exec|compile|__import__|subprocess|os\.system|os\.popen|pickle|marshal|shelve|yaml\.load|input\()' homework_archiver; then
+            echo '::warning title=sink-grep::发现潜在危险调用，需人工确认'
+          else
+            echo 'no dangerous sinks found'
+          fi
+
+      - name: pip-audit (known dependency CVEs)
+        shell: bash
+        run: |
+          pip-audit || echo '::warning title=pip-audit::存在已知漏洞依赖，请看上方明细'

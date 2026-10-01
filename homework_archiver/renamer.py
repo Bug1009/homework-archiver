@@ -1,7 +1,5 @@
 """需求 2：批量改名。
-
 规则示例：``学号_姓名_作业名.pdf`` → ``作业名_学号.pdf``。
-
 安全设计：
 1. :func:`plan_renames` 只做分析，不动磁盘，输出完整的改名计划；
 2. 调用方先把计划打印给用户确认，再调用 :func:`apply_renames`；
@@ -9,22 +7,21 @@
    - 文件名不符合“学号_姓名_作业名”规则（下划线不足 3 段）；
    - 目标文件在磁盘上已存在（包含链式改名会覆盖其他源文件的情况）；
    - 批次内有多个文件将改成同一个名字（全部跳过，不猜保留谁）；
-4. 真正执行前对每个目标再次复查，防止计划生成后文件发生变化。
+4. 真正执行前对每个目标再次复查，防止计划生成后文件发生变化；
+5. 预览输出经 sanitize_display 净化，文件名中的控制字符无法伪造输出。
 """
-
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from homework_archiver.scanner import scan_folder
+from homework_archiver.scanner import sanitize_display, scan_folder
 
 
 @dataclass(frozen=True)
 class RenameItem:
     """单条改名计划。
-
     skipped 为 True 时 target_name 为空、reason 写明跳过原因。
     """
 
@@ -142,12 +139,12 @@ def format_preview(items: list[RenameItem]) -> str:
     lines.append(
         f"合计：将改名 {result.renamed_count} 个，跳过 {result.skipped_count} 个"
     )
-    return "\n".join(lines)
+    # 逐行净化，防止文件名中的换行/ANSI 控制字符伪造终端输出
+    return "\n".join(sanitize_display(line) for line in lines)
 
 
 def apply_renames(folder: str | Path, items: list[RenameItem]) -> RenameResult:
     """执行改名计划。
-
     执行前对每个目标再次检查存在性，任何可能覆盖的情况都改为跳过。
     """
     root = Path(folder)

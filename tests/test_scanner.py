@@ -137,3 +137,46 @@ def test_cli_scan_missing_folder_returns_error_code(tmp_path: Path, capsys: pyte
 
     assert code == 2
     assert "错误" in capsys.readouterr().err
+
+
+# ---------- 安全加固：不跟随符号链接、输出净化 ----------
+
+
+def test_scan_skips_symlink_to_file(tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "secret.pdf"
+    target.write_bytes(b"x")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "link.pdf").symlink_to(target)
+
+    assert scanner.scan_folder(work) == []
+    assert scanner.scan_folder(work, recursive=True) == []
+
+
+def test_scan_recursive_skips_symlinked_directory(tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "real.pdf").write_bytes(b"x")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "linkdir").symlink_to(outside, target_is_directory=True)
+
+    assert scanner.scan_folder(work, recursive=True) == []
+
+
+def test_sanitize_display_escapes_control_characters():
+    assert scanner.sanitize_display("普通.pdf") == "普通.pdf"
+    escaped = scanner.sanitize_display("a\nb.pdf")
+    assert "\n" not in escaped
+    assert "\\x0a" in escaped
+    assert "\x1b" not in scanner.sanitize_display(chr(27) + "x")
+
+
+def test_listing_escapes_newline_in_filename(tmp_path: Path):
+    (tmp_path / "a\nb.pdf").write_bytes(b"x")
+    text = scanner.format_listing(scanner.scan_folder(tmp_path))
+    assert "\\x0a" in text
+    # 表头/分隔/数据/合计共 4 行，文件名中的换行不能再制造额外的行
+    assert text.count("\n") == 3

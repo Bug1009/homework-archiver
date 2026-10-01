@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homework-archiver"
+version = "0.1.0"
+description = "作业文件批量归档脚本：扫描列出 / 安全批量改名 / 按学期归档与撤销"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[project.scripts]
+homework-archiver = "homework_archiver.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["homework_archiver*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

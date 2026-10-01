@@ -1,6 +1,9 @@
 name: SECURITY
 
-# 安全扫描：全部为只读静态分析，不会执行被扫描代码
+# 安全扫描门禁：全部为只读静态分析，不会执行被扫描代码
+# - bandit：Python 主流 SAST（PyCQA），中危及以上即失败
+# - ruff --select S：flake8-bandit 规则集，任何告警即失败
+# - pip-audit：依赖已知 CVE（PyPA Advisory DB），发现漏洞即失败
 on:
   push:
     branches: ["debug/**"]
@@ -17,17 +20,8 @@ jobs:
       - name: Install security tools
         run: python -m pip install --upgrade pip bandit ruff pip-audit
 
-      - name: Bandit SAST
-        shell: bash
-        run: |
-          set +e
-          bandit -r homework_archiver -f screen -o bandit.log
-          rc=$?
-          echo "bandit rc=$rc"
-          ls -la bandit.log
-          echo '=====BANDIT LOG====='
-          cat bandit.log
-          echo '=====END====='
+      - name: Bandit SAST (medium+ gates)
+        run: bandit -r homework_archiver -ll
 
       - name: Ruff security ruleset S
         run: ruff check homework_archiver --select S
@@ -35,6 +29,4 @@ jobs:
       - name: pip-audit dependency CVEs
         shell: bash
         run: |
-          set +e
           pip-audit
-          echo "pip-audit rc=$?"

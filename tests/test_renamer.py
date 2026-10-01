@@ -1,8 +1,9 @@
 """需求 2 的测试：批量改名（预览确认、绝不覆盖）。"""
-
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 
 from homework_archiver import renamer
 from homework_archiver.cli import main
@@ -40,18 +41,14 @@ def test_compute_new_name_rejects_non_conforming():
 
 def test_plan_standard_rename(tmp_path: Path):
     _make(tmp_path, "2026001_张三_高数作业.pdf")
-
     item = _find(renamer.plan_renames(tmp_path), "2026001_张三_高数作业.pdf")
-
     assert not item.skipped
     assert item.target_name == "高数作业_2026001.pdf"
 
 
 def test_plan_skips_non_conforming(tmp_path: Path):
     _make(tmp_path, "笔记.pdf")
-
     item = _find(renamer.plan_renames(tmp_path), "笔记.pdf")
-
     assert item.skipped
     assert "不符合规则" in (item.reason or "")
 
@@ -59,9 +56,7 @@ def test_plan_skips_non_conforming(tmp_path: Path):
 def test_plan_skips_when_target_already_exists(tmp_path: Path):
     _make(tmp_path, "2026001_张三_作业.pdf")
     _make(tmp_path, "作业_2026001.pdf")  # 目标名已被占用
-
     item = _find(renamer.plan_renames(tmp_path), "2026001_张三_作业.pdf")
-
     assert item.skipped
     assert "已存在" in (item.reason or "")
 
@@ -69,9 +64,7 @@ def test_plan_skips_when_target_already_exists(tmp_path: Path):
 def test_plan_skips_all_files_in_batch_collision(tmp_path: Path):
     _make(tmp_path, "2026001_张三_作业.pdf")
     _make(tmp_path, "2026001_李四_作业.pdf")  # 同学号、作业名 → 同一目标
-
     items = renamer.plan_renames(tmp_path)
-
     moving = [item for item in items if not item.skipped]
     assert moving == []
     assert all("冲突" in (item.reason or "") for item in items)
@@ -81,9 +74,7 @@ def test_plan_detects_chain_overwrite(tmp_path: Path):
     # 1_a_2.pdf 想改成 2_1.pdf，而 2_1.pdf 已存在（它本身不合规、不会动）
     _make(tmp_path, "1_a_2.pdf")
     _make(tmp_path, "2_1.pdf")
-
     item = _find(renamer.plan_renames(tmp_path), "1_a_2.pdf")
-
     assert item.skipped
     assert "已存在" in (item.reason or "")
 
@@ -95,9 +86,7 @@ def test_plan_empty_folder(tmp_path: Path):
 def test_apply_performs_rename(tmp_path: Path):
     _make(tmp_path, "2026001_张三_作业.pdf", b"data")
     items = renamer.plan_renames(tmp_path)
-
     result = renamer.apply_renames(tmp_path, items)
-
     assert result.renamed == [("2026001_张三_作业.pdf", "作业_2026001.pdf")]
     assert not (tmp_path / "2026001_张三_作业.pdf").exists()
     assert (tmp_path / "作业_2026001.pdf").read_bytes() == b"data"
@@ -107,9 +96,7 @@ def test_apply_skips_if_source_vanished(tmp_path: Path):
     src = _make(tmp_path, "2026001_张三_作业.pdf")
     items = renamer.plan_renames(tmp_path)
     src.unlink()  # 计划生成后原文件被删
-
     result = renamer.apply_renames(tmp_path, items)
-
     assert result.renamed == []
     assert result.skipped[0][0] == "2026001_张三_作业.pdf"
     assert "不存在" in result.skipped[0][1]
@@ -119,9 +106,7 @@ def test_apply_rechecks_target_existence(tmp_path: Path):
     _make(tmp_path, "2026001_张三_作业.pdf")
     items = renamer.plan_renames(tmp_path)
     _make(tmp_path, "作业_2026001.pdf")  # 计划后人为制造冲突
-
     result = renamer.apply_renames(tmp_path, items)
-
     assert result.renamed == []
     assert "已存在" in result.skipped[0][1]
     # 原有文件内容未被覆盖
@@ -131,9 +116,7 @@ def test_apply_rechecks_target_existence(tmp_path: Path):
 def test_format_preview_shows_arrow_and_total(tmp_path: Path):
     _make(tmp_path, "2026001_张三_作业.pdf")
     _make(tmp_path, "杂项.txt")
-
     text = renamer.format_preview(renamer.plan_renames(tmp_path))
-
     assert "->" in text
     assert "将改名 1 个" in text
     assert "跳过 1 个" in text
@@ -141,9 +124,7 @@ def test_format_preview_shows_arrow_and_total(tmp_path: Path):
 
 def test_cli_preview_does_not_touch_disk(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     _make(tmp_path, "2026001_张三_作业.pdf")
-
     code = main(["rename", str(tmp_path)])
-
     assert code == 0
     out = capsys.readouterr().out
     assert "改名计划预览" in out
@@ -154,9 +135,7 @@ def test_cli_preview_does_not_touch_disk(tmp_path: Path, capsys: pytest.CaptureF
 
 def test_cli_apply_with_yes_renames(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     _make(tmp_path, "2026001_张三_作业.pdf")
-
     code = main(["rename", str(tmp_path), "--apply", "--yes"])
-
     assert code == 0
     assert "执行完成：改名 1 个" in capsys.readouterr().out
     assert (tmp_path / "作业_2026001.pdf").exists()
@@ -167,9 +146,7 @@ def test_cli_apply_can_be_cancelled_at_confirmation(
 ):
     _make(tmp_path, "2026001_张三_作业.pdf")
     monkeypatch.setattr("builtins.input", lambda *_: "n")
-
     code = main(["rename", str(tmp_path), "--apply"])
-
     assert code == 0
     assert "已取消" in capsys.readouterr().out
     assert (tmp_path / "2026001_张三_作业.pdf").exists()
@@ -179,6 +156,5 @@ def test_cli_rename_missing_folder_returns_error_code(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
     code = main(["rename", str(tmp_path / "nope")])
-
     assert code == 2
     assert "错误" in capsys.readouterr().err

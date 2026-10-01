@@ -1,7 +1,6 @@
 name: SECURITY
 
 # 安全扫描：全部为只读静态分析，不会执行被扫描代码
-# 诊断版：任何工具失败都不中断，所有发现写为注解供读取
 on:
   push:
     branches: ["debug/**"]
@@ -16,46 +15,26 @@ jobs:
           python-version: "3.12"
 
       - name: Install security tools
-        continue-on-error: true
-        run: |
-          python -m pip install --upgrade pip bandit ruff pip-audit 2>&1 | tee install.log
-          echo "PIP_DONE rc=${PIPESTATUS[0]}"
+        run: python -m pip install --upgrade pip bandit ruff pip-audit
 
       - name: Bandit SAST
-        continue-on-error: true
         shell: bash
         run: |
-          bandit -r homework_archiver -f screen -o bandit.log || true
-          echo '===BANDIT SUMMARY==='
-          grep -E 'Issue:|Severity:|Confidence:|Location:|Test ID:|Total issues|No issues' bandit.log | tee bandit-findings.txt
-          n=$(grep -c '>> Issue:' bandit.log || true)
-          echo "::warning title=bandit-count::共 $n 条发现"
-          while IFS= read -r l; do echo "::warning title=bandit::$l"; done < bandit-findings.txt
+          set +e
+          bandit -r homework_archiver -f screen -o bandit.log
+          rc=$?
+          echo "bandit rc=$rc"
+          ls -la bandit.log
+          echo '=====BANDIT LOG====='
+          cat bandit.log
+          echo '=====END====='
 
       - name: Ruff security ruleset S
-        continue-on-error: true
-        shell: bash
-        run: |
-          ruff check homework_archiver --select S --output-format concise > ruff-s.log 2>&1 || true
-          cat ruff-s.log
-          while IFS= read -r l; do echo "::warning title=ruff-S::$l"; done < ruff-s.log
-
-      - name: Dangerous sink grep
-        continue-on-error: true
-        shell: bash
-        run: |
-          if grep -rnE '\b(eval|exec|compile|__import__|subprocess|os\.system|os\.popen|pickle|marshal|shelve|yaml\.load)\b' homework_archiver > sinks.log; then
-            while IFS= read -r l; do echo "::warning title=sink::$l"; done < sinks.log
-          else
-            echo 'no dangerous sinks found'
-          fi
+        run: ruff check homework_archiver --select S
 
       - name: pip-audit dependency CVEs
-        continue-on-error: true
         shell: bash
         run: |
-          pip-audit > pip-audit.log 2>&1 || true
-          cat pip-audit.log
-          grep -E 'vuln|VULN|Advisory|found' pip-audit.log | while IFS= read -r l; do
-            echo "::warning title=pip-audit::$l"
-          done
+          set +e
+          pip-audit
+          echo "pip-audit rc=$?"

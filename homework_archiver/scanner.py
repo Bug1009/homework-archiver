@@ -14,6 +14,9 @@ from datetime import datetime
 from pathlib import Path
 from collections.abc import Iterable, Sequence
 
+# 本工具存放日志/报告的内部目录，扫描时跳过，避免把自己的产出当成作业文件
+INTERNAL_DIR = ".homework_archiver"
+
 
 @dataclass(frozen=True)
 class FileInfo:
@@ -68,7 +71,8 @@ def scan_folder(
         folder: 目标文件夹路径
         extensions: 只保留这些扩展名（如 ``['.docx', 'pdf']``）；
             None 或空表示不过滤
-        recursive: 是否递归扫描子文件夹，默认只看第一层
+        recursive: 是否递归扫描子文件夹，默认只看第一层。
+            递归时会跳过本工具的内部目录 ``.homework_archiver``。
 
     Returns:
         FileInfo 列表，按路径排序，保证输出稳定可测试。
@@ -88,6 +92,8 @@ def scan_folder(
     infos: list[FileInfo] = []
     for entry in iterator:
         if not entry.is_file():
+            continue
+        if recursive and INTERNAL_DIR in entry.relative_to(root).parts:
             continue
         if wanted is not None and entry.suffix.lower() not in wanted:
             continue
